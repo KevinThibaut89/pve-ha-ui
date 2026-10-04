@@ -17,7 +17,7 @@ It is pure Python standard library (no pip packages) plus one HTML page. You sig
 On **any Proxmox node**, as root:
 
 ```bash
-git clone <this repo> haui && cd haui
+git clone https://github.com/KevinThibaut89/pve-ha-ui.git && cd pve-ha-ui
 bash lxc/create-haui-lxc.sh
 ```
 
