@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "haui"
+version = "0.1.0"
+description = "A simple web UI for managing Proxmox VE High Availability"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+haui = "haui.__main__:main"
+
+[tool.setuptools]
+packages = ["haui"]
+
+[tool.setuptools.package-data]
+haui = ["static/*"]

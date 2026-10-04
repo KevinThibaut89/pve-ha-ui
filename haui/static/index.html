@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HA Manager</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+
+<!-- ============================================================ login -->
+<main id="login-view" class="login" hidden>
+  <form id="login-form" class="login-card" autocomplete="on">
+    <div class="brand"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shield"/></svg><span>HA Manager</span></div>
+    <p class="muted">Sign in with your Proxmox account.</p>
+    <div id="login-step-password">
+      <label>Username<input name="username" autocomplete="username" required placeholder="root"></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <label>Realm<select name="realm"></select></label>
+    </div>
+    <div id="login-step-tfa" hidden>
+      <label>Two-factor code<input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456"></label>
+      <label class="check"><input type="checkbox" name="recovery"> Use a recovery key instead</label>
+    </div>
+    <p id="login-error" class="form-error" role="alert"></p>
+    <button class="btn primary block" type="submit">Sign in</button>
+  </form>
+</main>
+
+<!-- ============================================================ setup -->
+<main id="setup-view" class="login" hidden>
+  <div class="login-card wide">
+    <div class="brand"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shield"/></svg><span>HA Manager</span></div>
+    <div>
+      <h2 class="setup-title">Connect to your Proxmox cluster</h2>
+      <p class="muted">Enter the IP address of one or more cluster nodes. You sign in with your Proxmox account next.</p>
+    </div>
+    <div id="setup-form"></div>
+  </div>
+</main>
+
+<!-- ============================================================== app -->
+<div id="app-view" hidden>
+  <header class="topbar">
+    <div class="brand"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shield"/></svg><span>HA Manager</span></div>
+    <div id="cluster-line" class="cluster-line"></div>
+    <div class="topbar-right">
+      <span id="updated" class="muted small"></span>
+      <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><use href="#i-gear"/></svg></button>
+      <button id="theme-btn" class="icon-btn" title="Toggle theme" aria-label="Toggle theme"><svg viewBox="0 0 24 24"><use href="#i-theme"/></svg></button>
+      <span id="me" class="me"></span>
+      <button id="logout-btn" class="btn ghost small">Sign out</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+    <button role="tab" data-tab="groups">Groups <span id="groups-count" class="count"></span></button>
+    <button role="tab" data-tab="activity">Activity <span id="activity-count" class="count"></span></button>
+    <button role="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <main class="content">
+    <!-- ------------------------------------------------ overview -->
+    <section id="tab-overview" class="tab">
+      <div id="summary" class="summary"></div>
+
+      <h2 class="section-title">Nodes</h2>
+      <div id="nodes" class="nodes"></div>
+
+      <div class="guests-head">
+        <h2 class="section-title">Guests</h2>
+        <div class="toolbar">
+          <div class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
+            <input id="search" type="search" placeholder="Search name, ID, node, tag…  ( / )" aria-label="Search guests">
+          </div>
+          <div id="filters" class="chips" role="radiogroup" aria-label="Filter">
+            <button data-filter="all" aria-pressed="true">All</button>
+            <button data-filter="ha">In HA</button>
+            <button data-filter="noha">Not in HA</button>
+            <button data-filter="problems">Problems</button>
+          </div>
+          <select id="node-filter" aria-label="Filter by node"></select>
+          <label class="check small"><input id="group-by-node" type="checkbox"> Group by node</label>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="guests">
+          <thead>
+            <tr>
+              <th class="c-sel"><input type="checkbox" id="select-all" aria-label="Select all visible"></th>
+              <th class="c-id sortable" data-sort="vmid">ID</th>
+              <th class="c-name sortable" data-sort="name">Name</th>
+              <th class="c-node sortable" data-sort="node">Node</th>
+              <th class="c-power sortable" data-sort="status">Power</th>
+              <th class="c-ha">HA</th>
+              <th class="c-state">Wanted state</th>
+              <th class="c-group">Group</th>
+              <th class="c-status sortable" data-sort="crm">HA status</th>
+              <th class="c-act"></th>
+            </tr>
+          </thead>
+          <tbody id="guest-rows"></tbody>
+        </table>
+        <p id="empty" class="empty" hidden>No guests match.</p>
+      </div>
+    </section>
+
+    <!-- -------------------------------------------------- groups -->
+    <section id="tab-groups" class="tab" hidden>
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">HA groups</h2>
+          <p class="muted small">Groups decide which nodes a guest may run on. Higher priority wins; equal priority spreads the load.</p>
+        </div>
+        <button id="new-group-btn" class="btn primary">New group</button>
+      </div>
+      <div id="groups" class="groups"></div>
+    </section>
+
+    <!-- ------------------------------------------------ activity -->
+    <section id="tab-activity" class="tab" hidden>
+      <h2 class="section-title">Recent HA activity</h2>
+      <div id="activity"></div>
+    </section>
+
+    <!-- ------------------------------------------------ settings -->
+    <section id="tab-settings" class="tab" hidden>
+      <h2 class="section-title">Cluster connection</h2>
+      <div id="settings"></div>
+    </section>
+  </main>
+
+  <div id="bulkbar" class="bulkbar" hidden>
+    <span id="bulk-count"></span>
+    <button class="btn small" data-bulk="add">Add to HA</button>
+    <button class="btn small" data-bulk="state">Set state…</button>
+    <button class="btn small" data-bulk="group">Set group…</button>
+    <button class="btn small danger" data-bulk="remove">Remove from HA</button>
+    <button class="btn small ghost" data-bulk="clear">Clear</button>
+  </div>
+</div>
+
+<!-- =========================================================== dialogs -->
+<dialog id="dlg" class="dialog">
+  <form method="dialog" id="dlg-form">
+    <h3 id="dlg-title"></h3>
+    <div id="dlg-body"></div>
+    <p id="dlg-error" class="form-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button value="cancel" class="btn ghost" formnovalidate>Cancel</button>
+      <button value="ok" id="dlg-ok" class="btn primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<!-- ============================================================= icons -->
+<svg class="sprite" width="0" height="0" aria-hidden="true">
+  <symbol id="i-shield" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8.5 12l2.5 2.5 4.5-5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></symbol>
+  <symbol id="i-move" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.1L4 16.7V20h3.3l5.3-5.3a4 4 0 0 0 5.1-5.4l-2.4 2.4-2.6-.6-.6-2.6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+</svg>
+</body>
+</html>

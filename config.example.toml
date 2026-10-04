@@ -1,0 +1,32 @@
+# HA Manager configuration — /etc/haui/haui.toml
+# The LXC installer writes this file for you; edit and `systemctl restart haui`.
+
+# Proxmox nodes to talk to (API port 8006). List several: when one is down the
+# next one is used, which is exactly when you need this tool.
+# Leave empty to enter them on the first-run screen. Anything saved from the
+# Settings panel (settings_file) overrides hosts / verify_tls / fingerprints.
+hosts = ["192.168.2.51", "192.168.2.52", "192.168.2.53"]
+settings_file = "/var/lib/haui/settings.json"
+
+# TLS towards Proxmox. Default PVE certificates are signed by the cluster CA in
+# /etc/pve/pve-root-ca.pem; copy it here and keep verify_tls on.
+verify_tls = true
+ca_file = "/etc/haui/pve-root-ca.pem"
+# Using custom/ACME certificates reached by IP? Pin their SHA-256 fingerprints
+# instead (openssl x509 -noout -fingerprint -sha256 -in cert.pem):
+# fingerprints = ["AB:CD:...", "12:34:..."]
+
+# Where the web UI listens. With tls_cert/tls_key set it serves HTTPS.
+listen = "0.0.0.0:8443"
+tls_cert = "/etc/haui/tls.crt"
+tls_key = "/etc/haui/tls.key"
+
+# Node maintenance mode. Proxmox 8 only offers it on the command line, so the
+# UI runs `ha-manager crm-command node-maintenance` over SSH with a key that
+# is locked to that single command (see README). Remove this section to hide
+# the maintenance buttons.
+[maintenance]
+ssh_key = "/etc/haui/id_ed25519"
+ssh_user = "root"
+ssh_known_hosts = "/var/lib/haui/known_hosts"
+# ssh_hosts = ["192.168.2.51"]   # default: every online node's cluster IP

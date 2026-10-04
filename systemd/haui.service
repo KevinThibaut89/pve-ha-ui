@@ -1,0 +1,30 @@
+[Unit]
+Description=HA Manager - simple web UI for Proxmox VE High Availability
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=haui
+Group=haui
+WorkingDirectory=/opt/haui
+ExecStart=/usr/bin/python3 -m haui --config /etc/haui/haui.toml
+Restart=on-failure
+RestartSec=5
+StateDirectory=haui
+
+# Hardening: the service only needs the network and its own state directory.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/haui
+
+[Install]
+WantedBy=multi-user.target
