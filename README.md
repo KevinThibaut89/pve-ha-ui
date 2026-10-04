@@ -12,28 +12,50 @@ A simple web UI for **Proxmox VE High Availability** (PVE 8). It puts everything
 
 It is pure Python standard library (no pip packages) plus one HTML page. You sign in with your normal Proxmox account and Proxmox's own permissions apply. No API token is stored anywhere.
 
-## Install on the cluster (LXC)
+## Install (one line, community-scripts style)
 
-On **any Proxmox node**, as root:
+Open the **Shell** of any Proxmox node (in the web UI: *node → Shell*) and paste:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/KevinThibaut89/pve-ha-ui/main/lxc/create-haui-lxc.sh)"
+```
+
+A short wizard asks **Default** or **Advanced settings**, plus whether to enable the maintenance button. Then it builds everything and prints the address to open. Nothing needs to be cloned or installed on the node first.
+
+**Default settings** create a small unprivileged Debian 12 container: 1 CPU, 512 MB RAM, 3 GB disk, DHCP on `vmbr0`, next free ID. **Advanced settings** let you pick the ID, resources, storage, bridge and a static IP.
+
+The installer then:
+
+- **Lists every cluster node's IP** in `/etc/haui/haui.toml`, so the UI keeps working when a node is down. You can change them later in **Settings**.
+- **Verifies TLS to Proxmox** by trusting the cluster CA (`/etc/pve/pve-root-ca.pem`). If you use custom or ACME certificates, it pins them instead.
+- **Serves the UI over HTTPS** with a self-signed certificate on **https://&lt;ct-ip&gt;:8443**.
+- **Adds the maintenance key** (optional, on by default): see [How maintenance mode works](#how-maintenance-mode-works).
+- **Can protect its own container with HA** (Advanced settings). That only works if the container's disk is on shared or replicated storage.
+
+To skip the questions and accept every default:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/KevinThibaut89/pve-ha-ui/main/lxc/create-haui-lxc.sh)" _ --defaults
+```
+
+`--help` lists the other options. To install from a fork or a tag, set `HAUI_REPO=owner/name` and/or `HAUI_REF=v0.2.0`.
+
+### Update
+
+Open the container's console and type:
+
+```bash
+update
+```
+
+You can also run it from the node: `pct exec <ctid> -- update`. It downloads the latest version, restarts the service, and **rolls back automatically** if the new version doesn't start.
+
+### From a checkout
 
 ```bash
 git clone https://github.com/KevinThibaut89/pve-ha-ui.git && cd pve-ha-ui
-bash lxc/create-haui-lxc.sh
-```
-
-The wizard creates a small unprivileged Debian 12 container (1 CPU, 512 MB, 3 GB) and sets it up as follows:
-
-- **Node list:** it lists every cluster node's IP in `/etc/haui/haui.toml`, so the UI keeps working when a node is down.
-- **TLS towards Proxmox:** it trusts the cluster CA (`/etc/pve/pve-root-ca.pem`), so TLS to Proxmox is verified. If you use custom or ACME certificates, it pins them instead.
-- **HTTPS for the UI:** it creates a self-signed certificate and serves the UI on **https://&lt;ct-ip&gt;:8443**.
-- **Maintenance key** (optional, on by default): see below.
-
-You can choose to have the container **protected by HA itself**. That only works if its disk is on shared or replicated storage.
-
-To deploy a newer checkout later:
-
-```bash
-bash lxc/create-haui-lxc.sh --update <ctid>
+bash lxc/create-haui-lxc.sh                 # install
+bash lxc/create-haui-lxc.sh --update <ctid> # push this checkout into an existing container
 ```
 
 ### Manual install (any Debian/Ubuntu box with Python 3.11+)

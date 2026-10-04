@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# haui-update — update HA Manager inside its container (community-scripts style:
+# just type `update` in the container console).
+#
+# Downloads the latest version from GitHub, swaps /opt/haui, restarts the
+# service and rolls back automatically if it does not come up again.
+# Source: /etc/haui/source (HAUI_REPO, HAUI_REF), overridable from the env.
+
+set -euo pipefail
+
+# Everything runs inside main() so bash has parsed the whole file before this
+# script replaces itself in /usr/local/bin.
+main() {
+[[ -f /etc/haui/source ]] && source /etc/haui/source
+HAUI_REPO="${HAUI_REPO:-KevinThibaut89/pve-ha-ui}"
+HAUI_REF="${HAUI_REF:-main}"
+
+[[ $EUID -eq 0 ]] || { echo "run as root" >&2; exit 1; }
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+old_version="$(cd /opt/haui 2>/dev/null && python3 -c 'import haui; print(haui.__version__)' 2>/dev/null || echo none)"
+echo "==> Downloading ${HAUI_REPO}@${HAUI_REF}"
+curl -fsSL "https://github.com/${HAUI_REPO}/archive/${HAUI_REF}.tar.gz" | tar -xz -C "$tmp" --strip-components=1
+[[ -f "$tmp/haui/__init__.py" && -f "$tmp/systemd/haui.service" ]] \
+    || { echo "the download does not look like HA Manager" >&2; exit 1; }
+new_version="$(cd "$tmp" && python3 -c 'import haui; print(haui.__version__)')"
+
+echo "==> Installing ${old_version} -> ${new_version}"
+rm -rf /opt/haui.new /opt/haui.old
+mkdir -p /opt/haui.new
+cp -r "$tmp"/haui "$tmp"/systemd "$tmp"/lxc "$tmp"/config.example.toml "$tmp"/pyproject.toml "$tmp"/README.md /opt/haui.new/
+[[ -d /opt/haui ]] && mv /opt/haui /opt/haui.old
+mv /opt/haui.new /opt/haui
+cp /opt/haui/systemd/haui.service /etc/systemd/system/haui.service
+install -m 755 /opt/haui/lxc/haui-update /usr/local/bin/haui-update
+systemctl daemon-reload
+systemctl restart haui
+
+sleep 3
+if systemctl is-active --quiet haui; then
+    rm -rf /opt/haui.old
+    echo "==> Updated to ${new_version}; haui is running."
+    exit 0
+fi
+
+echo "!!  haui did not start with ${new_version} — rolling back" >&2
+journalctl -u haui -n 20 --no-pager >&2 || true
+if [[ -d /opt/haui.old ]]; then
+    rm -rf /opt/haui
+    mv /opt/haui.old /opt/haui
+    cp /opt/haui/systemd/haui.service /etc/systemd/system/haui.service
+    systemctl daemon-reload
+    systemctl restart haui
+    echo "==> Rolled back to ${old_version}." >&2
+fi
+exit 1
+}
+
+main "$@"

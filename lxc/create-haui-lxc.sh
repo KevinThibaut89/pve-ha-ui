@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # create-haui-lxc.sh — build a Proxmox LXC container that runs HA Manager.
 #
-# Run this ON A PROXMOX NODE, as root, from inside a checkout of this repo:
+# Run this ON A PROXMOX NODE, as root. One line, community-scripts style:
+#
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/KevinThibaut89/pve-ha-ui/main/lxc/create-haui-lxc.sh)"
+#
+# or from a checkout of this repo:
 #
 #   bash lxc/create-haui-lxc.sh                 # interactive wizard (whiptail)
 #   bash lxc/create-haui-lxc.sh --defaults      # non-interactive, all defaults
-#   bash lxc/create-haui-lxc.sh --update 123    # push new code into CT 123
+#   bash lxc/create-haui-lxc.sh --update 123    # push this checkout into CT 123
+#
+# Without a checkout around it, the script downloads the app from GitHub
+# (override with HAUI_REPO=owner/name and HAUI_REF=branch-or-tag).
 #
 # What it does:
 #   1. Downloads the Debian 12 standard CT template (if not already cached).
@@ -149,9 +156,32 @@ command -v pct   >/dev/null || die "'pct' not found — run this on a Proxmox VE
 command -v pveam >/dev/null || die "'pveam' not found — run this on a Proxmox VE node"
 command -v pvesh >/dev/null || die "'pvesh' not found — run this on a Proxmox VE node"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[[ -f "$REPO_ROOT/pyproject.toml" && -d "$REPO_ROOT/haui" ]] \
-    || die "cannot find the haui source tree above $REPO_ROOT/lxc — run from a full checkout"
+HAUI_REPO="${HAUI_REPO:-KevinThibaut89/pve-ha-ui}"
+HAUI_REF="${HAUI_REF:-main}"
+
+# The forced command for the maintenance key in /etc/pve/priv/authorized_keys:
+# only "node-maintenance enable|disable <node>" gets through. Must stay
+# identical to haui.maintenance.AUTHORIZED_KEYS_COMMAND (a test checks this).
+FORCED_CMD='case $SSH_ORIGINAL_COMMAND in *[!A-Za-z0-9.\ -]*) echo denied >&2; exit 1;; node-maintenance\ enable\ *|node-maintenance\ disable\ *) exec /usr/sbin/ha-manager crm-command $SSH_ORIGINAL_COMMAND;; *) echo denied >&2; exit 1;; esac'
+
+# Use the checkout this script lives in, or download the app (curl | bash case).
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+REPO_ROOT=""
+if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
+    REPO_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+    [[ -f "$REPO_ROOT/pyproject.toml" && -d "$REPO_ROOT/haui" ]] || REPO_ROOT=""
+fi
+if [[ -z "$REPO_ROOT" ]]; then
+    command -v curl >/dev/null || die "'curl' is needed to download HA Manager"
+    REPO_ROOT="$(mktemp -d /tmp/haui-src.XXXXXX)"
+    trap 'rm -rf "$REPO_ROOT"' EXIT
+    download() {
+        curl -fsSL "https://github.com/${HAUI_REPO}/archive/${HAUI_REF}.tar.gz" \
+            | tar -xz -C "$REPO_ROOT" --strip-components=1
+    }
+    run "Downloading HA Manager (${HAUI_REPO}@${HAUI_REF})" download
+    [[ -d "$REPO_ROOT/haui" ]] || die "the download does not look like HA Manager — check HAUI_REPO/HAUI_REF"
+fi
 
 push_source() {
     local ct="$1" tarball
@@ -159,7 +189,7 @@ push_source() {
     tar -C "$REPO_ROOT" -czf "$tarball" \
         --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
         --exclude='*.egg-info' --exclude='.claude' --exclude='tests' \
-        haui systemd config.example.toml pyproject.toml README.md
+        haui systemd lxc config.example.toml pyproject.toml README.md
     pct push "$ct" "$tarball" /tmp/haui-src.tar.gz
     rm -f "$tarball"
     pct exec "$ct" -- bash -c "rm -rf /opt/haui.new && mkdir -p /opt/haui.new \
@@ -174,6 +204,8 @@ if [[ -n "$UPDATE_CTID" ]]; then
     run "Copying HA Manager source to CT ${UPDATE_CTID}" push_source "$UPDATE_CTID"
     run "Restarting the haui service" pct exec "$UPDATE_CTID" -- bash -c \
         "cp /opt/haui/systemd/haui.service /etc/systemd/system/haui.service \
+         && install -m 755 /opt/haui/lxc/haui-update /usr/local/bin/haui-update \
+         && { [[ -e /usr/bin/update ]] || ln -s /usr/local/bin/haui-update /usr/bin/update; } \
          && systemctl daemon-reload && systemctl restart haui"
     log "Updated. $(pct exec "$UPDATE_CTID" -- systemctl is-active haui 2>/dev/null || true)"
     exit 0
@@ -187,11 +219,10 @@ mapfile -t ROOTFS_STORAGES < <(pvesm status -content rootdir 2>/dev/null \
     || die "no active storage supports container disks (rootdir) — check 'pvesm status'"
 
 # Cluster nodes as "name ip" lines (a standalone node has no cluster entry).
-mapfile -t NODES < <(pvesh get /cluster/status --output-format json 2>/dev/null | python3 -c '
-import json, sys
-for item in json.load(sys.stdin):
-    if item.get("type") == "node" and item.get("ip"):
-        print(item["name"], item["ip"])
+# Parsed with core Perl, which every Proxmox node has.
+mapfile -t NODES < <(pvesh get /cluster/status --output-format json 2>/dev/null | perl -MJSON::PP -e '
+    my $items = JSON::PP::decode_json(join("", <STDIN>));
+    for my $i (@$items) { print "$i->{name} $i->{ip}\n" if $i->{type} eq "node" && $i->{ip} }
 ')
 [[ ${#NODES[@]} -gt 0 ]] || die "could not read the cluster node list (pvesh get /cluster/status)"
 
@@ -376,7 +407,7 @@ run "Installing Debian packages" \
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
         apt-get -qq update
-        apt-get -qq install -y --no-install-recommends python3 openssh-client openssl ca-certificates
+        apt-get -qq install -y --no-install-recommends python3 openssh-client openssl ca-certificates curl
     "
 
 run "Copying HA Manager source to /opt/haui" push_source "$CTID"
@@ -452,6 +483,10 @@ setup_ct() {
         chown -R haui:haui /etc/haui /var/lib/haui
         chmod 600 /etc/haui/tls.key /etc/haui/id_ed25519 2>/dev/null || true
         cp /opt/haui/systemd/haui.service /etc/systemd/system/haui.service
+        install -m 755 /opt/haui/lxc/haui-update /usr/local/bin/haui-update
+        # community-scripts convention: type 'update' in the container console
+        [[ -e /usr/bin/update ]] || ln -s /usr/local/bin/haui-update /usr/bin/update
+        mkdir -p /etc/haui && printf 'HAUI_REPO=%s\nHAUI_REF=%s\n' '${HAUI_REPO}' '${HAUI_REF}' > /etc/haui/source
         systemctl daemon-reload
         systemctl enable --now haui
     "
@@ -460,10 +495,9 @@ run "Configuring HA Manager" setup_ct
 
 # ------------------------------------------------------- maintenance key
 authorize_key() {
-    local pub cmd line keys=/etc/pve/priv/authorized_keys
+    local pub line keys=/etc/pve/priv/authorized_keys
     pub="$(pct exec "$CTID" -- cat /etc/haui/id_ed25519.pub)"
-    cmd="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from haui.maintenance import AUTHORIZED_KEYS_COMMAND as c; print(c)' "$REPO_ROOT")"
-    line="restrict,command=\"${cmd}\" ${pub}"
+    line="restrict,command=\"${FORCED_CMD}\" ${pub}"
     if ! grep -qF "${pub}" "$keys" 2>/dev/null; then
         echo "$line" >>"$keys"
     fi
@@ -496,9 +530,11 @@ cat <<EOF
   Nodes     : ${#NODES[@]} ($(printf '%s\n' "${NODES[@]}" | awk '{print $1}' | paste -sd, -))
   Maintenance button : $([[ $MAINTENANCE -eq 1 ]] && echo "enabled (key in /etc/pve/priv/authorized_keys)" || echo "disabled")
 
+  Update later: open the container's console and type   update
+               (or from this node: pct exec $CTID -- update)
+
   Useful commands (on this node):
     pct exec $CTID -- journalctl -u haui -f             # follow logs
     pct exec $CTID -- nano /etc/haui/haui.toml          # edit config, then:
     pct exec $CTID -- systemctl restart haui
-    bash lxc/create-haui-lxc.sh --update $CTID          # deploy a newer checkout
 EOF
